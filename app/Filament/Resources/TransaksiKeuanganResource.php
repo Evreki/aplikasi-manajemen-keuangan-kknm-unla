@@ -24,6 +24,18 @@ class TransaksiKeuanganResource extends Resource
     protected static ?string $model = TransaksiKeuangan::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-currency-dollar';
+    protected static ?string $navigationLabel = 'Transaksi Keuangan';
+
+    public static function getNavigationBadge(): ?string
+    {
+        $pendingCount = TransaksiKeuangan::where('status', 'pending')->count();
+        return $pendingCount > 0 ? (string) $pendingCount : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
+    }
 
     public static function form(Form $form): Form
     {
@@ -44,13 +56,13 @@ class TransaksiKeuanganResource extends Resource
         return $table
             ->columns([
                 TextColumn::make('created_at')->label('Waktu')->dateTime('d M Y, H:i')->sortable(),
-                TextColumn::make('nim')->label('Mahasiswa')->description(fn ($record) => $record->nama_mahasiswa)->searchable(),
+                TextColumn::make('nim')->label('Mahasiswa')->description(fn($record) => $record->nama_mahasiswa)->searchable(),
                 TextColumn::make('no_telepon')->label('No WA')->icon('heroicon-o-phone'),
                 ImageColumn::make('bukti_pembayaran_path')->label('Bukti')->disk('public')->square()->height(50),
                 TextColumn::make('total_bayar')->money('IDR')->label('Nominal'),
                 TextColumn::make('status')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
+                    ->color(fn(string $state): string => match ($state) {
                         'pending' => 'warning',
                         'approved' => 'success',
                         'rejected' => 'danger',
@@ -66,7 +78,7 @@ class TransaksiKeuanganResource extends Resource
                 Tables\Actions\EditAction::make(),
 
                 // ==========================================================
-                // 1. TOMBOL APPROVE (Template Profesional)
+                // 1. TOMBOL APPROVE (Menggunakan Fonnte API)
                 // ==========================================================
                 Action::make('approve_wa')
                     ->label('Approve & WA')
@@ -76,53 +88,44 @@ class TransaksiKeuanganResource extends Resource
                     ->modalHeading('Verifikasi Pembayaran')
                     ->modalDescription('Yakin? Notifikasi WA akan dikirim ke mahasiswa.')
                     ->action(function ($record) {
-
                         // 1. Update Status Lokal
                         $record->update(['status' => 'approved']);
 
-                        // 2. Kirim WA (Template Baru)
-                        try {
-                            $nomorTujuan = $record->no_telepon;
+                        // 2. Kirim WA via Fonnte
+                        $fonnte = new \App\Services\FonnteService();
+                        $webKkn = new \App\Services\WebKknCallbackService();
 
-                            if (!empty($nomorTujuan)) {
-                                // Format Rupiah
-                                $rupiah = number_format($record->total_bayar, 0, ',', '.');
+                        if (!empty($record->no_telepon)) {
+                            $message = $fonnte->buildApproveMessage([
+                                'nama_mahasiswa' => $record->nama_mahasiswa,
+                                'kkn_pembayaran_id' => $record->kkn_pembayaran_id,
+                                'total_bayar' => $record->total_bayar,
+                            ]);
 
-                                // ISI PESAN APPROVE
-                                $pesan = "Halo {$record->nama_mahasiswa},\n\n" .
-                                         "Selamat! Pembayaran KKNM Anda telah DISETUJUI. ✅\n\n" .
-                                         "ID Pembayaran: #{$record->kkn_pembayaran_id}\n" .
-                                         "Jumlah: Rp {$rupiah}\n\n" .
-                                         "Catatan Admin: ACC Keuangan, silahkan lanjut daftar\n\n" .
-                                         "Anda sekarang dapat melanjutkan ke tahap berikutnya yaitu mengisi formulir pendaftaran KKNM di http://kknm.unla.ac.id/pendaftaran .\n\n" .
-                                         "Login di aplikasi untuk melanjutkan pendaftaran.\n\n" .
-                                         "Terima kasih.";
+                            $waResult = $fonnte->sendMessage($record->no_telepon, $message);
 
-                                Http::post('http://localhost:3000/send-message', [
-                                    'number' => $nomorTujuan,
-                                    'message' => $pesan,
-                                ]);
-
-                                Notification::make()->title('WA Terkirim')->success()->send();
+                            if ($waResult['success']) {
+                                Notification::make()->title('WA Terkirim via Fonnte')->success()->send();
+                            } else {
+                                Notification::make()->title('Gagal Kirim WA: ' . ($waResult['error'] ?? 'Unknown'))->warning()->send();
                             }
-                        } catch (\Exception $e) {
-                            Notification::make()->title('Gagal Kirim WA')->warning()->send();
                         }
 
                         // 3. Callback ke Web KKN
-                        try {
-                            Http::post('http://127.0.0.1:8000/api/payment-callback', [
-                                'kkn_pembayaran_id' => $record->kkn_pembayaran_id,
-                                'status' => 'approved',
-                            ]);
-                            Notification::make()->title('Sinkronisasi Sukses!')->success()->send();
-                        } catch (\Exception $e) {
+                        $callbackResult = $webKkn->sendApproveCallback(
+                            $record->kkn_pembayaran_id,
+                            $record->nim
+                        );
+
+                        if ($callbackResult['success']) {
+                            Notification::make()->title('Sinkronisasi Web KKN Sukses!')->success()->send();
+                        } else {
                             Notification::make()->title('Gagal Sinkron Web KKN')->danger()->send();
                         }
                     }),
 
                 // ==========================================================
-                // 2. TOMBOL TOLAK (Template Profesional)
+                // 2. TOMBOL TOLAK (Menggunakan Fonnte API)
                 // ==========================================================
                 Action::make('reject_wa')
                     ->label('Tolak')
@@ -138,48 +141,39 @@ class TransaksiKeuanganResource extends Resource
                             ->rows(3),
                     ])
                     ->action(function ($record, array $data) {
-
                         // 1. Update Status Lokal
                         $record->update(['status' => 'rejected']);
 
-                        // 2. Kirim WA (Template Baru)
-                        try {
-                            $nomorTujuan = $record->no_telepon;
+                        // 2. Kirim WA via Fonnte
+                        $fonnte = new \App\Services\FonnteService();
+                        $webKkn = new \App\Services\WebKknCallbackService();
 
-                            if(!empty($nomorTujuan)) {
-                                // Format Rupiah
-                                $rupiah = number_format($record->total_bayar, 0, ',', '.');
+                        if (!empty($record->no_telepon)) {
+                            $message = $fonnte->buildRejectMessage([
+                                'nama_mahasiswa' => $record->nama_mahasiswa,
+                                'kkn_pembayaran_id' => $record->kkn_pembayaran_id,
+                                'total_bayar' => $record->total_bayar,
+                            ], $data['alasan']);
 
-                                // ISI PESAN TOLAK
-                                $pesan = "Halo {$record->nama_mahasiswa},\n\n" .
-                                         "Mohon Maaf, Pembayaran KKNM Anda DITOLAK. ❌\n\n" .
-                                         "ID Pembayaran: #{$record->kkn_pembayaran_id}\n" .
-                                         "Jumlah: Rp {$rupiah}\n\n" .
-                                         "Catatan Admin: {$data['alasan']}\n\n" .
-                                         "Silakan LOGIN KEMBALI di http://kknm.unla.ac.id/login untuk mengupload ulang bukti pembayaran yang benar.\n\n" .
-                                         "Terima kasih.";
+                            $waResult = $fonnte->sendMessage($record->no_telepon, $message);
 
-                                Http::post('http://localhost:3000/send-message', [
-                                    'number' => $nomorTujuan,
-                                    'message' => $pesan,
-                                ]);
+                            if ($waResult['success']) {
                                 Notification::make()->title('WA Penolakan Terkirim')->success()->send();
+                            } else {
+                                Notification::make()->title('Gagal Kirim WA')->warning()->send();
                             }
-                        } catch (\Exception $e) {
-                           Notification::make()->title('Gagal Kirim WA')->warning()->send();
                         }
 
-                        // 3. Callback ke Web KKN
-                        try {
-                            Http::post('http://127.0.0.1:8000/api/payment-callback', [
-                                'kkn_pembayaran_id' => $record->kkn_pembayaran_id,
-                                'status' => 'rejected',
-                                'catatan' => $data['alasan']
-                            ]);
+                        // 3. Callback ke Web KKN (buka akses upload ulang)
+                        $callbackResult = $webKkn->sendRejectCallback(
+                            $record->kkn_pembayaran_id,
+                            $record->nim,
+                            $data['alasan']
+                        );
 
+                        if ($callbackResult['success']) {
                             Notification::make()->title('Akses Upload Ulang Dibuka')->success()->send();
-
-                        } catch (\Exception $e) {
+                        } else {
                             Notification::make()->title('Gagal Sinkron Web KKN')->danger()->send();
                         }
                     }),
@@ -218,7 +212,7 @@ class TransaksiKeuanganResource extends Resource
 
                 TextEntry::make('status')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
+                    ->color(fn(string $state): string => match ($state) {
                         'pending' => 'warning',
                         'approved' => 'success',
                         'rejected' => 'danger',
@@ -227,8 +221,12 @@ class TransaksiKeuanganResource extends Resource
             ]);
     }
 
-    public static function getRelations(): array { return []; }
-    public static function getPages(): array {
+    public static function getRelations(): array
+    {
+        return [];
+    }
+    public static function getPages(): array
+    {
         return [
             'index' => Pages\ListTransaksiKeuangans::route('/'),
             'create' => Pages\CreateTransaksiKeuangan::route('/create'),

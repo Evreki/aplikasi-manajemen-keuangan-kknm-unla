@@ -35,4 +35,14 @@ return [
         ],
     ],
 
+    // Fonnte WhatsApp API
+    'fonnte' => [
+        'token' => env('FONNTE_TOKEN', 'dynwNgQEmPkzLHoGMi6y'),
+    ],
+
+    // Web KKN Callback
+    'webkkn' => [
+        'url' => env('WEBKKN_URL', 'http://127.0.0.1:8000'),
+    ],
+
 ];
