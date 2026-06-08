@@ -9,4 +9,4 @@ Route::get('/user', function (Request $request) {
 })->middleware('auth:sanctum');
 
 // INI ROUTE YANG PENTING
-Route::post('/receive-payment', [ReceivePaymentController::class, 'store']);
+Route::post('/receive-payment', [ReceivePaymentController::class, 'store'])->middleware('api.key');

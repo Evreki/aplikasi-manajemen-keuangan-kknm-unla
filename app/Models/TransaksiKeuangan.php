@@ -17,10 +17,20 @@ class TransaksiKeuangan extends Model
         'nama_mahasiswa',
         'no_telepon',
         'total_bayar',
+        'waktu_transfer',
         'bukti_pembayaran_path',
         'status',
+        'is_kip',
+        'keterangan_mahasiswa',
         'ocr_data',
         'ocr_confidence',
+        'verified_by',
+        'alasan_penolakan',
+    ];
+
+    protected $casts = [
+        'waktu_transfer' => 'datetime',
+        'is_kip' => 'boolean',
     ];
 
     /**
@@ -32,5 +42,13 @@ class TransaksiKeuangan extends Model
             return asset('storage/' . $this->bukti_pembayaran_path);
         }
         return null;
+    }
+
+    /**
+     * Relasi ke admin yang memverifikasi transaksi
+     */
+    public function verifier()
+    {
+        return $this->belongsTo(User::class, 'verified_by');
     }
 }

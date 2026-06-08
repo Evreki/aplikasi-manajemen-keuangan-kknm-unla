@@ -13,11 +13,15 @@ use Filament\Tables\Table;
 class UserResource extends Resource
 {
     protected static ?string $model = User::class;
+    protected static ?string $slug = 'old-users';
     protected static ?string $navigationIcon = 'heroicon-o-users';
     protected static ?string $navigationLabel = 'Manajemen Admin';
     protected static ?string $modelLabel = 'Admin';
     protected static ?string $pluralModelLabel = 'Admin';
     protected static ?int $navigationSort = 100;
+
+    // Sembunyikan navigasi karena sudah menggunakan custom UserPage Livewire
+    protected static bool $shouldRegisterNavigation = false;
 
     public static function form(Form $form): Form
     {
